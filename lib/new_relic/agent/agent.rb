@@ -226,12 +226,12 @@ module NewRelic::Agent
           # the specified report data, then it will be ignored.
           
           control.log! "Reporting performance data every #{@report_period} seconds."        
-          @worker_loop.add_task(@report_period) do 
+          @worker_loop.add_task(@report_period, "Timeslice Harvest") do 
             harvest_and_send_timeslice_data
           end
           
           if @should_send_samples && @use_transaction_sampler
-            @worker_loop.add_task(@report_period) do 
+            @worker_loop.add_task(@report_period, "Transaction Harvest") do 
               harvest_and_send_slowest_sample
             end
           elsif !control.developer_mode?
@@ -240,11 +240,13 @@ module NewRelic::Agent
           end
           
           if @should_send_errors && @error_collector.enabled
-            @worker_loop.add_task(@report_period) do 
+            @worker_loop.add_task(@report_period, "Error Harvest") do 
               harvest_and_send_errors
             end
           end
+          log.debug "Added all tasks, preparing to run worker loop"
           @worker_loop.run
+          log.debug "Exited worker loop???"
         rescue StandardError
           @connected = false
           raise
@@ -273,7 +275,7 @@ module NewRelic::Agent
           run_worker_loop
         rescue IgnoreSilentlyException
           control.log! "Unable to establish connection with the server.  Run with log level set to debug for more information."
-        rescue StandardError => e
+        rescue Exception => e
           control.log! e, :error
           control.log! e.backtrace.join("\n  "), :error
         end

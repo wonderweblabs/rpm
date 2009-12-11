@@ -12,15 +12,21 @@ module NewRelic::Agent
       @log = log
       @should_run = true
       @pid = $$
+      log.debug "Creating worker loop."
     end
 
     # Run infinitely, calling the registered tasks at their specified
     # call periods.  The caller is responsible for creating the thread
     # that runs this worker loop
     def run
+      log.debug "Running worker loop..."
       while keep_running do
         run_next_task
       end
+      log.debug "Ended worker loop; should_run=#{@should_run}; pid=#{@pid}; $$=#{$$}"
+    rescue Exception => e
+      log.error "Got a totally unexpected exception that blew out the worker loop: #{e}"
+      log.error "#{e.message}: #{e.backtrace.join("\n   ")}"
     end
     
     def keep_running
@@ -28,6 +34,7 @@ module NewRelic::Agent
     end
     
     def stop
+      log.debug "Stop called in worker loop: #{caller.join("\n   ")}"
       @should_run = false
     end
 
@@ -35,11 +42,11 @@ module NewRelic::Agent
     
     # add a task to the worker loop.  The task will be called approximately once
     # every call_period seconds.  The task is passed as a block
-    def add_task(call_period, &task_proc)
+    def add_task(call_period, desc="Task", &task_proc)
       if call_period < MIN_CALL_PERIOD
         raise ArgumentError, "Invalid Call Period (must be > #{MIN_CALL_PERIOD}): #{call_period}" 
       end
-      @tasks << LoopTask.new(call_period, &task_proc)
+      @tasks << LoopTask.new(call_period, desc, &task_proc)
     end
       
     private 
@@ -58,14 +65,14 @@ module NewRelic::Agent
         # get the next task to be executed, which is the task with the lowest (ie, soonest)
         # next invocation time.
         task = next_task
-        
+        log.debug "Got next task, ready to execute..."        
         # sleep in chunks no longer than 1 second
         while Time.now < task.next_invocation_time
           
           # sleep until this next task's scheduled invocation time
           sleep_time = [task.next_invocation_time - Time.now, 0.000001].max
           sleep_time = (sleep_time > 1) ? 1 : sleep_time
-
+          log.debug "wait #{sleep_time} second..."
           sleep sleep_time
             
           return if !keep_running
@@ -74,7 +81,9 @@ module NewRelic::Agent
         begin
           # wrap task execution in a block that won't collect a TT
           NewRelic::Agent.disable_transaction_tracing do
+            log.debug "execute #{task}.."
             task.execute
+            log.debug "...finished executing"
           end
         rescue ServerError => e
           log.debug "Server Error: #{e}"
@@ -91,6 +100,7 @@ module NewRelic::Agent
           end
         rescue Timeout::Error, NewRelic::Agent::IgnoreSilentlyException
           # Want to ignore these because they are handled already
+          log.debug "Got a routine error: #{$!}"
         rescue ScriptError, StandardError => e 
           log.error "Error running task in Agent Worker Loop (#{e.class}): #{e} " 
           log.debug e.backtrace.join("\n")
@@ -99,12 +109,17 @@ module NewRelic::Agent
       
       class LoopTask
       
-        def initialize(call_period, &task_proc)
+        def initialize(call_period, desc, &task_proc)
           @call_period = call_period
           @last_invocation_time = Time.now
           @task = task_proc
+          @desc = desc
         end
-      
+        
+        def to_s
+          "Task[#{@desc}]"
+        end
+
         def next_invocation_time
           @last_invocation_time + @call_period
         end
