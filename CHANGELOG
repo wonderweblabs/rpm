@@ -1,3 +1,9 @@
+v2.9.10.
+  * Add option in newrelic cap recipe to override the rails_env
+    used to fetch app_names in deployments.
+  * Fix bug in plugin installation that generated an error message
+    about a missing plugin
+
 v2.9.9.
   * Disable at_exit handler for Unicorn which sometimes caused the
     agent to stop reporting immediately.
